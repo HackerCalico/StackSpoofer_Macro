@@ -8,7 +8,7 @@
 
 https://github.com/HackerCalico/StackSpoofer_Macro
 
-经过改造的栈欺骗技术。
+经过改造的栈欺骗技术，易于使用且功能强大。
 
 ![spoof.jpg](https://raw.githubusercontent.com/HackerCalico/StackSpoofer_Macro/refs/heads/main/spoof.png)
 
