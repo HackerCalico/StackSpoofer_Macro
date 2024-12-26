@@ -42,7 +42,7 @@ int gadgetStackSize = 0;
 #define MinGadgetStackSize 200
 
 int GetStackSize(PBYTE pDll, PBYTE pFunc) {
-    // 定位 pdata
+    // 定位 .pdata
     PBYTE pPDATA = NULL;
     int pdataSize = LocateSection(pDll, OBF(".pdata"), pPDATA);
     if (pPDATA == NULL) {
