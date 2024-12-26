@@ -10,7 +10,7 @@ https://github.com/HackerCalico/StackSpoof_Macro
 
 经过改造的栈欺骗技术。
 
-![RAT_Obfuscator.jpg (1000×300)](https://raw.githubusercontent.com/HackerCalico/StackSpoof_Macro/refs/heads/main/spoof.jpg)
+![spoof.jpg](https://raw.githubusercontent.com/HackerCalico/StackSpoof_Macro/refs/heads/main/spoof.png)
 
 ### 2. 效果 & 优势
 
