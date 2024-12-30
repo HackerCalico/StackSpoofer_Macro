@@ -283,7 +283,7 @@ __attribute__((naked)) void GetRetAddr() {
     }
 }
 
-// 参数总大小不能超过 MinGadgetStackSize
+// 参数中不能存在函数调用, 参数总大小不能超过 MinGadgetStackSize
 #define SPOOF(pFunc, ...) ({ \
     int result = GetSpoofStack(); \
     using retType = decltype(((decltype(pFunc)*)pFunc)(__VA_ARGS__)); \
