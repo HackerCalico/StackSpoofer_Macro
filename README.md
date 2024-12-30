@@ -24,6 +24,8 @@ https://github.com/HackerCalico/StackSpoofer_Macro
 
 ### 3. 注意事项
 
-(1) Visual Studio Installer ---> 单个组件 ---> LLVM (clang-cl) 和 Clang ---> 安装
+(1) SPOOF 宏的参数中不能存在函数调用，例如 SPOOF(func1, func2())。
 
 (2) 栈欺骗调用的函数的参数总大小不能超过 MinGadgetStackSize，这个值可以结合 DLL 随意改变，默认是 200 bit。
+
+(3) Visual Studio Installer ---> 单个组件 ---> LLVM (clang-cl) 和 Clang ---> 安装
