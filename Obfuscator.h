@@ -4,11 +4,10 @@
 constexpr char key1 = '\x01';
 constexpr char key2 = '\x02';
 
-constexpr char* XorData(char* src, char* dest, int len) {
+constexpr void XorData(char* src, char* dest, int len) {
     for (int i = 0; i < len; i++) {
         dest[i] = src[i] ^ key1 ^ key2;
     }
-    return dest;
 }
 
 template <int len>
@@ -21,7 +20,7 @@ public:
         XorData(str, obfString, len);
     }
 
-    // 运行时解密, 局部变量解密至栈中, 随着运行会被覆盖
+    // 运行时解密至栈中
     char* Decrypt() {
         XorData(obfString, obfString, len);
         return obfString;

@@ -35,11 +35,10 @@ typedef struct _UNWIND_INFO {
     UNWIND_CODE UnwindCode[1];
 } UNWIND_INFO, * PUNWIND_INFO;
 
-BYTE initStack[400];
+PBYTE pInitStack = NULL;
 int initStackSize = 0;
 PBYTE pGadget = NULL;
 int gadgetStackSize = 0;
-#define MinGadgetStackSize 200
 
 int GetStackSize(PBYTE pDll, PBYTE pFunc) {
     // 定位 .pdata
@@ -62,6 +61,8 @@ int GetStackSize(PBYTE pDll, PBYTE pFunc) {
     }
 
     // 计算栈帧大小
+    // 该算法在计算 RtlUserThreadStart BaseThreadInitThunk 以外的函数的栈帧大小时不保证准确, 比如自定义的 Gadget 函数存在特殊的栈操作时
+    // 请在 Process Hacker 中检验欺骗情况
     int stackSize = 0;
     int UWOP_SET_FPREG_HIT = 0;
     PUNWIND_INFO pUnwindInfo = (PUNWIND_INFO)(pDll + pRuntimeFunction->UnwindData);
@@ -135,7 +136,7 @@ int GetStackSize(PBYTE pDll, PBYTE pFunc) {
 
 void FindGadget(PBYTE pSpoof) {
     PBYTE pTEXT = NULL;
-    char* gadgetSig = OBF("\x48\x8B\x1B\xFF\xE3");
+    char* gadgetSig = OBF("\x48\x8B\x1B\xFF\xE3"); // Gadget 定位码中不能出现 0x00
     int gadgetSigLen = strlen(gadgetSig);
     int textSize = LocateSection(pSpoof, OBF(".text"), pTEXT);
     if (pTEXT != NULL) {
@@ -149,7 +150,7 @@ void FindGadget(PBYTE pSpoof) {
             }
             if (isFind) {
                 int curGadgetStackSize = GetStackSize(pSpoof, pTEXT + i);
-                if (curGadgetStackSize > gadgetStackSize && curGadgetStackSize > MinGadgetStackSize) {
+                if (curGadgetStackSize > gadgetStackSize) {
                     pGadget = pTEXT + i;
                     gadgetStackSize = curGadgetStackSize;
                 }
@@ -158,11 +159,14 @@ void FindGadget(PBYTE pSpoof) {
     }
 }
 
-int GetSpoofStack() {
+int GetSpoofStack(int minGadgetStackSize) {
     if (pGadget != NULL) {
+        if (gadgetStackSize < minGadgetStackSize) {
+            return 0;
+        }
         return 1;
     }
-    // 获取 BaseThreadInitThunk RtlUserThreadStart 地址
+    // 获取 RtlUserThreadStart BaseThreadInitThunk 地址
     DWORD_PTR _PEB = __readgsqword(0x60);
     DWORD_PTR _PEB_LDR_DATA = *(PDWORD_PTR)(_PEB + 0x18);
     PLIST_ENTRY pInInitializationOrderModuleList = (PLIST_ENTRY) * (PDWORD_PTR)(_PEB_LDR_DATA + 0x30);
@@ -173,7 +177,7 @@ int GetSpoofStack() {
     do {
         char dllName[20];
         PUNICODE_STRING string = (PUNICODE_STRING)((PBYTE)pNode + 0x38);
-        int dllNameLen = string->Length / 2 - 4;
+        int dllNameLen = string->Length / sizeof(wchar_t) - 4;
         if (dllNameLen < sizeof(dllName)) {
             for (int i = 0; i < dllNameLen; i++) {
                 dllName[i] = string->Buffer[i];
@@ -201,20 +205,19 @@ int GetSpoofStack() {
         return 0;
     }
 
-    // 计算 BaseThreadInitThunk RtlUserThreadStart 栈帧大小
+    // 计算 RtlUserThreadStart BaseThreadInitThunk 栈帧大小
     int rutsStackSize = GetStackSize(pNtdll, pRtlUserThreadStart);
     int btitStackSize = GetStackSize(pKernel32, pBaseThreadInitThunk);
-    initStackSize = rutsStackSize + btitStackSize;
-    if (!rutsStackSize || !btitStackSize || initStackSize > sizeof(initStack)) {
+    if (!rutsStackSize || !btitStackSize) {
         return 0;
     }
+    initStackSize = rutsStackSize + btitStackSize;
 
-    // 查找并复制 BaseThreadInitThunk RtlUserThreadStart 栈帧
+    // 查找 RtlUserThreadStart BaseThreadInitThunk 栈帧
     DWORD_PTR _TEB = __readgsqword(0x30);
     DWORD_PTR stackBase = *(PDWORD_PTR)(_TEB + 8);
     DWORD_PTR stacklimit = *(PDWORD_PTR)(_TEB + 16);
     DWORD_PTR stack = stackBase - sizeof(DWORD_PTR);
-    PBYTE pInitStack = NULL;
     while (stacklimit < stack - rutsStackSize - btitStackSize) {
         if (*(PDWORD_PTR)stack == 0x00) {
             DWORD_PTR addr = *(PDWORD_PTR)(stack - rutsStackSize);
@@ -230,11 +233,10 @@ int GetSpoofStack() {
     if (pInitStack == NULL) {
         return 0;
     }
-    XorData((char*)pInitStack, (char*)initStack, initStackSize);
 
     // 在 spoof.dll 查找 Gadget
     FindGadget(pSpoof);
-    if (pGadget == NULL) {
+    if (pGadget == NULL || gadgetStackSize < minGadgetStackSize) {
         return 0;
     }
     return 1;
@@ -270,7 +272,7 @@ __attribute__((naked)) void JmpToFunc(...) {
 
 void SetSpoofStack(PBYTE& pSpoofStack) {
     pSpoofStack -= (initStackSize + sizeof(DWORD_PTR) * 20);
-    XorData((char*)initStack, (char*)pSpoofStack, initStackSize);
+    memcpy(pSpoofStack, pInitStack, initStackSize);
     *(PDWORD_PTR)(pSpoofStack + initStackSize) = 0x00;
     pSpoofStack -= gadgetStackSize;
 }
@@ -283,9 +285,28 @@ __attribute__((naked)) void GetRetAddr() {
     }
 }
 
-// 参数中不能存在函数调用, 参数总大小不能超过 MinGadgetStackSize
-#define SPOOF(pFunc, ...) ({ \
-    int result = GetSpoofStack(); \
+// 计算参数总大小, 不能超过 15 个
+#define SIZEOF0() 0
+#define SIZEOF1(a) sizeof(a)
+#define SIZEOF2(a, ...) sizeof(a) + SIZEOF1(__VA_ARGS__)
+#define SIZEOF3(a, ...) sizeof(a) + SIZEOF2(__VA_ARGS__)
+#define SIZEOF4(a, ...) sizeof(a) + SIZEOF3(__VA_ARGS__)
+#define SIZEOF5(a, ...) sizeof(a) + SIZEOF4(__VA_ARGS__)
+#define SIZEOF6(a, ...) sizeof(a) + SIZEOF5(__VA_ARGS__)
+#define SIZEOF7(a, ...) sizeof(a) + SIZEOF6(__VA_ARGS__)
+#define SIZEOF8(a, ...) sizeof(a) + SIZEOF7(__VA_ARGS__)
+#define SIZEOF9(a, ...) sizeof(a) + SIZEOF8(__VA_ARGS__)
+#define SIZEOF10(a, ...) sizeof(a) + SIZEOF9(__VA_ARGS__)
+#define SIZEOF11(a, ...) sizeof(a) + SIZEOF10(__VA_ARGS__)
+#define SIZEOF12(a, ...) sizeof(a) + SIZEOF11(__VA_ARGS__)
+#define SIZEOF13(a, ...) sizeof(a) + SIZEOF12(__VA_ARGS__)
+#define SIZEOF14(a, ...) sizeof(a) + SIZEOF13(__VA_ARGS__)
+#define SIZEOF15(a, ...) sizeof(a) + SIZEOF14(__VA_ARGS__)
+
+// 参数中不能存在函数调用, 如果 Gadget 栈帧大小 < 参数总大小则直接调用函数
+#define SPOOF(pFunc, parasNum, ...) ({ \
+    int minGadgetStackSize = SIZEOF##parasNum(__VA_ARGS__); \
+    int result = GetSpoofStack(minGadgetStackSize); \
     using retType = decltype(((decltype(pFunc)*)pFunc)(__VA_ARGS__)); \
     if (result) { \
         int getRetAddr = 1; \
